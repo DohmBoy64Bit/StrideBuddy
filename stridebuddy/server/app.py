@@ -80,9 +80,16 @@ def create_app() -> Flask:
         sender = user
         to = (data.get("to") or "").strip()
         content = (data.get("content") or "").strip()
+        content_html = (data.get("content_html") or "").strip()
         if not to or not content:
             return jsonify({"ok": False, "error": "to and content required"}), 400
-        msg = {"from": sender, "to": to, "content": content, "ts": datetime.utcnow().isoformat()}
+        msg = {
+            "from": sender,
+            "to": to,
+            "content": content,
+            "content_html": content_html,
+            "ts": datetime.utcnow().isoformat(),
+        }
         MESSAGE_QUEUES.setdefault(to, []).append(msg)
         return jsonify({"ok": True})
 

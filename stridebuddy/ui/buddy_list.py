@@ -162,9 +162,10 @@ class BuddyListWindow(QMainWindow):
         for m in msgs or []:
             sender = m.get("from") or "buddy"
             text = m.get("content") or ""
-            self._deliver_incoming(sender, text)
+            html = m.get("content_html") or ""
+            self._deliver_incoming(sender, text, html)
 
-    def _deliver_incoming(self, sender: str, text: str) -> None:
+    def _deliver_incoming(self, sender: str, text: str, html: str = "") -> None:
         # Notify via tray
         tray = QApplication.instance().property("sb_tray")
         if tray:
@@ -184,7 +185,7 @@ class BuddyListWindow(QMainWindow):
             target = msg
         # Append incoming
         if hasattr(target, "append_incoming"):
-            target.append_incoming(text)
+            target.append_incoming(text, html)
 
     def _on_online(self, names: list[str]) -> None:
         # Update simple suffix on known buddies

@@ -189,6 +189,8 @@ class MessageWindow(QMainWindow):
         plain = self.input.toPlainText().strip()
         if not plain:
             return
+        # Capture rich HTML BEFORE clearing the editor
+        content_html = self.input.toHtml()
         frag = QTextDocumentFragment(self.input.document())
         self._append_to_transcript(self.local_screen_name, fragment=frag)
         self.input.clear()
@@ -217,7 +219,12 @@ class MessageWindow(QMainWindow):
         try:
             base_url = self.settings.get("server_url", "http://127.0.0.1:5000")
             sess = QApplication.instance().property("sb_session") or requests.Session()
-            sess.post(f"{base_url}/api/messages/send", json={"to": self.peer_screen_name, "content": plain}, timeout=4)
+            # Send both plain and HTML for rich rendering on receiver
+            sess.post(
+                f"{base_url}/api/messages/send",
+                json={"to": self.peer_screen_name, "content": plain, "content_html": content_html},
+                timeout=4,
+            )
         except Exception:
             pass
 
@@ -335,13 +342,17 @@ class MessageWindow(QMainWindow):
             pass
 
     # --- External message API ---
-    def append_incoming(self, text: str) -> None:
-        if not text:
+    def append_incoming(self, text: str = "", html: str = "") -> None:
+        if not text and not html:
             return
         # Play receive sound before displaying
         if self.settings.get("notifications_sounds", True):
             self._play_sound("recv")
-        self._append_to_transcript(self.peer_screen_name, text=text)
+        if html:
+            frag = QTextDocumentFragment.fromHtml(html)
+            self._append_to_transcript(self.peer_screen_name, fragment=frag)
+        else:
+            self._append_to_transcript(self.peer_screen_name, text=text)
         if self.settings.get("chat_transcripts_enabled", False):
             self._log_message(self.peer_screen_name, text)
 
