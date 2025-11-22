@@ -24,25 +24,49 @@
         </div>
         <div class="content">
           <h2>Getting started</h2>
-          <p>First, create an account on the signup page, then sign in from the desktop app.</p>
+          <p>Create a screen name, start the desktop app, and sign in.</p>
           <ul>
             <li><a href="{{ url_for('signup') }}">Create a screen name</a></li>
             <li><a href="{{ url_for('forgot') }}">Forgot password</a></li>
           </ul>
 
           <h2>Sign in options</h2>
-          <p><b>Save password</b> stores your password in the system keychain. <b>Auto‑login</b> signs you in automatically next launch if a saved password exists.</p>
+          <p><b>Save password</b> stores your password in the system keychain. <b>Auto‑login</b> signs you in automatically next launch if a saved password exists. You can manage these in <b>Setup → Account</b>.</p>
 
           <h2>Buddy List</h2>
-          <p>Double‑click a buddy to open a message window. Use <b>Sign Off</b> to return to the sign‑on screen.</p>
+          <ul>
+            <li>Double‑click a buddy to open a chat.</li>
+            <li>Right‑click a buddy to <b>Mute/Block</b> or remove; right‑click a group to <b>Rename</b>.</li>
+            <li>Status shows <b>(online)</b>, <b>(away)</b>, or <b>(offline)</b>. Flags <b>[muted]</b>/<b>[blocked]</b> are preserved.</li>
+          </ul>
 
           <h2>Messaging</h2>
-          <p>Use the toolbar to format your message (B / I / U, color, link, emoji). Send with <span class="kbd">Enter</span> or <span class="kbd">Ctrl</span>+<span class="kbd">Enter</span>.</p>
+          <ul>
+            <li>Use the toolbar (B/I/U, color, link, emoji). Links are clickable on the recipient.</li>
+            <li>Typing indicators display in the chat status bar.</li>
+            <li>Send with <span class="kbd">Enter</span> or <span class="kbd">Ctrl</span>+<span class="kbd">Enter</span>.</li>
+          </ul>
+
+          <h2>Settings</h2>
+          <ul>
+            <li><b>Notifications</b>: sounds and desktop toasts.</li>
+            <li><b>Chat</b>: default styles and <b>Enable transcript logging</b>.</li>
+            <li><b>Appearance</b>: theme (Light/Retro/Auto), timestamp (12h/24h), compact spacing.</li>
+            <li><b>Data</b>: open settings folder, export/import settings, clear saved passwords.</li>
+          </ul>
+
+          <h2>Where things are</h2>
+          <ul>
+            <li><b>Logs</b>: %APPDATA%\StrideBuddy\logs (enable in Setup → Chat)</li>
+            <li><b>Settings</b>: %APPDATA%\StrideBuddy\settings.json</li>
+          </ul>
 
           <h2>Troubleshooting</h2>
           <ul>
-            <li>If sign‑in fails, ensure the server is running at <span class="kbd">http://127.0.0.1:5000</span>.</li>
-            <li>Can’t open links? Make sure your browser is set as default.</li>
+            <li>Sign‑in fails: ensure the server is running at <span class="kbd">http://127.0.0.1:5000</span>.</li>
+            <li>Unauthorized (401): sign out and sign in again.</li>
+            <li>No sounds: enable in Setup → Notifications; check system volume.</li>
+            <li>Help/Signup 404: restart server and hard‑refresh (Ctrl+F5).</li>
           </ul>
         </div>
       </div>
