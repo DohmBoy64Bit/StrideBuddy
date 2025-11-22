@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from html import escape
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, QUrl
 from PySide6.QtGui import (
     QIcon,
     QTextCursor,
@@ -37,6 +37,7 @@ from ..storage import load_settings, get_app_dir
 from PySide6.QtWidgets import QApplication
 from pathlib import Path
 import requests
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 
 class MessageWindow(QMainWindow):
@@ -191,9 +192,20 @@ class MessageWindow(QMainWindow):
         frag = QTextDocumentFragment(self.input.document())
         self._append_to_transcript(self.local_screen_name, fragment=frag)
         self.input.clear()
+        # Reset typing format so next message isn't affected by previous styles (e.g., links)
+        reset_fmt = QTextCharFormat()
+        reset_fmt.setAnchor(False)
+        reset_fmt.setFontUnderline(False)
+        if self.settings.get("chat_default_bold"):
+            reset_fmt.setFontWeight(QFont.Weight.Bold)
+        else:
+            reset_fmt.setFontWeight(QFont.Weight.Normal)
+        reset_fmt.setFontItalic(bool(self.settings.get("chat_default_italic", False)))
+        reset_fmt.setForeground(QColor("#000000"))
+        self.input.mergeCurrentCharFormat(reset_fmt)
         # Notifications
         if self.settings.get("notifications_sounds", True):
-            QApplication.beep()
+            self._play_sound("send")
         if self.settings.get("notifications_toasts", True):
             tray = QApplication.instance().property("sb_tray")
             if tray:
@@ -204,7 +216,8 @@ class MessageWindow(QMainWindow):
         # Send to peer via server
         try:
             base_url = self.settings.get("server_url", "http://127.0.0.1:5000")
-            requests.post(f"{base_url}/api/messages/send", json={"from": self.local_screen_name, "to": self.peer_screen_name, "content": plain}, timeout=4)
+            sess = QApplication.instance().property("sb_session") or requests.Session()
+            sess.post(f"{base_url}/api/messages/send", json={"to": self.peer_screen_name, "content": plain}, timeout=4)
         except Exception:
             pass
 
@@ -273,7 +286,13 @@ class MessageWindow(QMainWindow):
             cursor.mergeCharFormat(fmt)
         else:
             cursor.insertText(link_text, fmt)
+        # Move cursor to after the link and reset typing format so subsequent text isn't a link
+        cursor.clearSelection()
         self.input.setTextCursor(cursor)
+        reset_fmt = QTextCharFormat()
+        reset_fmt.setAnchor(False)
+        reset_fmt.setFontUnderline(False)
+        self.input.mergeCurrentCharFormat(reset_fmt)
 
     def _show_emoji_menu(self) -> None:
         if not hasattr(self, "_emoji_menu"):
@@ -319,8 +338,39 @@ class MessageWindow(QMainWindow):
     def append_incoming(self, text: str) -> None:
         if not text:
             return
+        # Play receive sound before displaying
+        if self.settings.get("notifications_sounds", True):
+            self._play_sound("recv")
         self._append_to_transcript(self.peer_screen_name, text=text)
         if self.settings.get("chat_transcripts_enabled", False):
             self._log_message(self.peer_screen_name, text)
+
+    # --- Sound helpers ---
+    def _play_sound(self, kind: str) -> None:
+        try:
+            app = QApplication.instance()
+            key_player = f"sb_player_{kind}"
+            key_output = f"sb_audio_{kind}"
+            player = app.property(key_player)
+            output = app.property(key_output)
+            if player is None or output is None:
+                player = QMediaPlayer(self)
+                output = QAudioOutput(self)
+                player.setAudioOutput(output)
+                app.setProperty(key_player, player)
+                app.setProperty(key_output, output)
+            file_map = {
+                "send": asset_path("sounds/message_send.mp3"),
+                "recv": asset_path("sounds/message_received.mp3"),
+            }
+            src = file_map.get(kind)
+            if not src:
+                return
+            player.setSource(QUrl.fromLocalFile(src))
+            output.setVolume(0.8)  # 80%
+            player.play()
+        except Exception:
+            # Fallback to system beep if playback fails
+            QApplication.beep()
 
 

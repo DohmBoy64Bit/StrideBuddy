@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Tuple
 
-from flask import Flask, jsonify, request, render_template, redirect, url_for
+from flask import Flask, jsonify, request, render_template, redirect, url_for, session
 from passlib.hash import bcrypt
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
@@ -23,6 +23,7 @@ def get_db_url() -> str:
 
 def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", template_folder="templates")
+    app.secret_key = os.getenv("SB_SECRET", "stridebuddy-dev-secret")
 
     engine = create_engine(get_db_url(), future=True)
     Base.metadata.create_all(engine)
@@ -58,11 +59,10 @@ def create_app() -> Flask:
     # --- Presence & Messaging (prototype) ---
     @app.post("/api/presence/heartbeat")
     def presence_heartbeat():
-        data = request.get_json(silent=True) or {}
-        screen_name = (data.get("screen_name") or "").strip()
-        if not screen_name:
-            return jsonify({"ok": False, "error": "screen_name required"}), 400
-        ONLINE[screen_name] = datetime.utcnow()
+        user = session.get("user")
+        if not user:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+        ONLINE[user] = datetime.utcnow()
         return jsonify({"ok": True})
 
     @app.get("/api/presence/online")
@@ -73,22 +73,25 @@ def create_app() -> Flask:
 
     @app.post("/api/messages/send")
     def send_message():
+        user = session.get("user")
+        if not user:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
         data = request.get_json(silent=True) or {}
-        sender = (data.get("from") or "").strip()
+        sender = user
         to = (data.get("to") or "").strip()
         content = (data.get("content") or "").strip()
-        if not sender or not to or not content:
-            return jsonify({"ok": False, "error": "from, to, content required"}), 400
+        if not to or not content:
+            return jsonify({"ok": False, "error": "to and content required"}), 400
         msg = {"from": sender, "to": to, "content": content, "ts": datetime.utcnow().isoformat()}
         MESSAGE_QUEUES.setdefault(to, []).append(msg)
         return jsonify({"ok": True})
 
     @app.get("/api/messages/poll")
     def poll_messages():
-        screen_name = (request.args.get("screen_name") or "").strip()
-        timeout = int(request.args.get("timeout", "15"))
+        screen_name = session.get("user")
         if not screen_name:
-            return jsonify({"ok": False, "error": "screen_name required"}), 400
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+        timeout = int(request.args.get("timeout", "15"))
         deadline = time.time() + min(timeout, 30)
         while time.time() < deadline:
             queue = MESSAGE_QUEUES.get(screen_name, [])
@@ -102,40 +105,49 @@ def create_app() -> Flask:
     # --- Buddies API ---
     @app.get("/api/buddies")
     def list_buddies():
-        owner = (request.args.get("owner") or "").strip()
+        owner = session.get("user")
         if not owner:
-            return jsonify({"ok": False, "error": "owner required"}), 400
-        with SessionLocal() as session:
-            rows = session.query(Buddy).filter(Buddy.owner_screen_name == owner).all()
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+        with SessionLocal() as db:
+            rows = db.query(Buddy).filter(Buddy.owner_screen_name == owner).all()
             data = [{"buddy": b.buddy_screen_name, "group": b.group_name or ""} for b in rows]
         return jsonify({"ok": True, "buddies": data})
 
     @app.post("/api/buddies")
     def add_buddy():
+        owner = session.get("user")
+        if not owner:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
         data = request.get_json(silent=True) or {}
-        owner = (data.get("owner") or "").strip()
         buddy = (data.get("buddy") or "").strip()
         group = (data.get("group") or "").strip() or None
-        if not owner or not buddy:
-            return jsonify({"ok": False, "error": "owner and buddy required"}), 400
-        with SessionLocal() as session:
-            exists = session.scalar(select(Buddy).where(Buddy.owner_screen_name == owner, Buddy.buddy_screen_name == buddy))
+        if not buddy:
+            return jsonify({"ok": False, "error": "buddy required"}), 400
+        if buddy == owner:
+            return jsonify({"ok": False, "error": "cannot add yourself"}), 400
+        with SessionLocal() as db:
+            target = db.scalar(select(User).where(User.screen_name == buddy))
+            if not target:
+                return jsonify({"ok": False, "error": "user not found"}), 404
+            exists = db.scalar(select(Buddy).where(Buddy.owner_screen_name == owner, Buddy.buddy_screen_name == buddy))
             if exists:
                 return jsonify({"ok": True})
-            session.add(Buddy(owner_screen_name=owner, buddy_screen_name=buddy, group_name=group))
-            session.commit()
+            db.add(Buddy(owner_screen_name=owner, buddy_screen_name=buddy, group_name=group))
+            db.commit()
         return jsonify({"ok": True})
 
     @app.delete("/api/buddies")
     def delete_buddy():
+        owner = session.get("user")
+        if not owner:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
         data = request.get_json(silent=True) or {}
-        owner = (data.get("owner") or "").strip()
         buddy = (data.get("buddy") or "").strip()
-        if not owner or not buddy:
-            return jsonify({"ok": False, "error": "owner and buddy required"}), 400
-        with SessionLocal() as session:
-            session.query(Buddy).filter(Buddy.owner_screen_name == owner, Buddy.buddy_screen_name == buddy).delete()
-            session.commit()
+        if not buddy:
+            return jsonify({"ok": False, "error": "buddy required"}), 400
+        with SessionLocal() as db:
+            db.query(Buddy).filter(Buddy.owner_screen_name == owner, Buddy.buddy_screen_name == buddy).delete()
+            db.commit()
         return jsonify({"ok": True})
 
     @app.post("/api/auth/signup")
@@ -148,13 +160,13 @@ def create_app() -> Flask:
         if len(screen_name) < 2 or len(screen_name) > 32:
             return jsonify({"ok": False, "error": "screen_name must be 2-32 chars"}), 400
         pw_hash = bcrypt.hash(password)
-        with SessionLocal() as session:
-            exists = session.scalar(select(User).where(User.screen_name == screen_name))
+        with SessionLocal() as db:
+            exists = db.scalar(select(User).where(User.screen_name == screen_name))
             if exists:
                 return jsonify({"ok": False, "error": "screen_name already taken"}), 409
             user = User(screen_name=screen_name, password_hash=pw_hash)
-            session.add(user)
-            session.commit()
+            db.add(user)
+            db.commit()
         return jsonify({"ok": True})
 
     @app.post("/api/auth/login")
@@ -164,10 +176,12 @@ def create_app() -> Flask:
         password = (data.get("password") or "").strip()
         if not screen_name or not password:
             return jsonify({"ok": False, "error": "screen_name and password required"}), 400
-        with SessionLocal() as session:
-            user = session.scalar(select(User).where(User.screen_name == screen_name))
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.screen_name == screen_name))
             if not user or not bcrypt.verify(password, user.password_hash):
                 return jsonify({"ok": False, "error": "invalid credentials"}), 401
+        # Set session cookie
+        session["user"] = screen_name
         return jsonify({"ok": True})
 
     @app.post("/api/auth/request_reset")
@@ -176,14 +190,14 @@ def create_app() -> Flask:
         screen_name = (data.get("screen_name") or "").strip()
         if not screen_name:
             return jsonify({"ok": False, "error": "screen_name required"}), 400
-        with SessionLocal() as session:
-            user = session.scalar(select(User).where(User.screen_name == screen_name))
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.screen_name == screen_name))
             if not user:
                 return jsonify({"ok": True})  # don't reveal existence
             code = f"{secrets.randbelow(1000000):06d}"
             user.reset_code = code
             user.reset_expires_at = datetime.utcnow() + timedelta(minutes=15)
-            session.commit()
+            db.commit()
             # In dev, return the code so you can test without email
             return jsonify({"ok": True, "dev_code": code})
 
@@ -195,8 +209,8 @@ def create_app() -> Flask:
         new_password = (data.get("new_password") or "").strip()
         if not all([screen_name, code, new_password]):
             return jsonify({"ok": False, "error": "screen_name, code, new_password required"}), 400
-        with SessionLocal() as session:
-            user = session.scalar(select(User).where(User.screen_name == screen_name))
+        with SessionLocal() as db:
+            user = db.scalar(select(User).where(User.screen_name == screen_name))
             if not user or not user.reset_code or user.reset_code != code:
                 return jsonify({"ok": False, "error": "invalid code"}), 400
             if user.reset_expires_at and user.reset_expires_at < datetime.utcnow():
@@ -204,7 +218,7 @@ def create_app() -> Flask:
             user.password_hash = bcrypt.hash(new_password)
             user.reset_code = None
             user.reset_expires_at = None
-            session.commit()
+            db.commit()
         return jsonify({"ok": True})
 
     return app

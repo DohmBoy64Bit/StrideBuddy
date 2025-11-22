@@ -246,7 +246,9 @@ class SignOnWindow(QMainWindow):
         self.statusBar().showMessage("Signing on...", 1500)
         try:
             base_url = load_settings().get("server_url", "http://127.0.0.1:5000")
-            resp = requests.post(
+            # Use a persistent session so cookies (login) persist across API calls
+            sess = requests.Session()
+            resp = sess.post(
                 f"{base_url}/api/auth/login",
                 json={"screen_name": screen_name, "password": password},
                 timeout=5,
@@ -268,6 +270,8 @@ class SignOnWindow(QMainWindow):
                 else:
                     delete_saved_password(screen_name)
                     self.saved_hint.setVisible(False)
+                # Store session globally on the app so workers and windows can reuse it
+                QApplication.instance().setProperty("sb_session", sess)
                 self._open_buddy_list()
             else:
                 self._show_error(data.get("error") or "Invalid screen name or password.")

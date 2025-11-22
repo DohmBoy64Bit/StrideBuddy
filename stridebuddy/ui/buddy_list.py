@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QMenu,
+    QMessageBox,
     QLineEdit,
     QLabel,
     QTreeWidget,
@@ -70,6 +71,10 @@ class BuddyListWindow(QMainWindow):
         self.add_btn = QPushButton("&Add Buddy")
         self.signoff_btn = QPushButton("Sign &Off")
         # Match Sign On's green-accented border style
+        self.add_btn.setStyleSheet(
+            "QPushButton { border: 1px solid #6ee7b7; border-radius: 4px; padding: 4px 10px; }"
+            "QPushButton:hover { border-color: #10b981; }"
+        )
         self.signoff_btn.setStyleSheet(
             "QPushButton { border: 1px solid #6ee7b7; border-radius: 4px; padding: 4px 10px; }"
             "QPushButton:hover { border-color: #10b981; }"
@@ -86,8 +91,9 @@ class BuddyListWindow(QMainWindow):
 
         # Networking worker thread (smooth UI)
         self._base_url = load_settings().get("server_url", "http://127.0.0.1:5000")
+        self._session = QApplication.instance().property("sb_session")
         self._net_thread = QThread(self)
-        self._net_worker = _NetWorker(self._base_url, self.local_screen_name)
+        self._net_worker = _NetWorker(self._base_url, self.local_screen_name, self._session)
         self._net_worker.moveToThread(self._net_thread)
         self._net_thread.started.connect(self._net_worker.run)
         self._net_worker.messages.connect(self._on_messages)
@@ -206,7 +212,8 @@ class BuddyListWindow(QMainWindow):
     def _refresh_buddies(self) -> None:
         # Fetch buddies from server and render groups
         try:
-            r = requests.get(f"{self._base_url}/api/buddies", params={"owner": self.local_screen_name}, timeout=5)
+            sess = self._session or requests.Session()
+            r = sess.get(f"{self._base_url}/api/buddies", timeout=5)
             data = r.json() if r.ok else {}
             buddies = data.get("buddies", [])
             self.tree.clear()
@@ -231,19 +238,59 @@ class BuddyListWindow(QMainWindow):
             self._populate_sample()
 
     def _add_buddy_dialog(self) -> None:
-        name, ok = QInputDialog.getText(self, "Add Buddy", "Screen name:")
+        # Screen name prompt with black label
+        name_dlg = QInputDialog(self)
+        name_dlg.setWindowTitle("Add Buddy")
+        name_dlg.setLabelText("Screen name:")
+        name_dlg.setInputMode(QInputDialog.TextInput)
+        name_dlg.setStyleSheet("QInputDialog QLabel { color: black; }")
+        ok = name_dlg.exec()
+        name = name_dlg.textValue()
         if not ok or not name.strip():
             return
-        group, ok = QInputDialog.getText(self, "Add Buddy", "Group (optional):")
+        # Group prompt with black label
+        group_dlg = QInputDialog(self)
+        group_dlg.setWindowTitle("Add Buddy")
+        group_dlg.setLabelText("Group (optional):")
+        group_dlg.setInputMode(QInputDialog.TextInput)
+        group_dlg.setStyleSheet("QInputDialog QLabel { color: black; }")
+        ok = group_dlg.exec()
+        group = group_dlg.textValue()
         if not ok:
             return
         try:
-            payload = {"owner": self.local_screen_name, "buddy": name.strip(), "group": (group.strip() or None)}
-            r = requests.post(f"{self._base_url}/api/buddies", json=payload, timeout=5)
-            if r.ok:
+            payload = {"buddy": name.strip(), "group": (group.strip() or None)}
+            sess = self._session or requests.Session()
+            r = sess.post(f"{self._base_url}/api/buddies", json=payload, timeout=5)
+            if r.ok and (r.headers.get("content-type","").startswith("application/json")) and (r.json().get("ok")):
                 self._refresh_buddies()
+            else:
+                # Try to extract server error for user-friendly message
+                err = ""
+                try:
+                    data = r.json()
+                    err = data.get("error") or ""
+                except Exception:
+                    pass
+                if r.status_code == 404 and not err:
+                    err = "User not found."
+                if r.status_code == 401 and not err:
+                    err = "Please sign in again."
+                if not err:
+                    err = f"Could not add buddy (HTTP {r.status_code})."
+                mb = QMessageBox(self)
+                mb.setWindowTitle("Add Buddy")
+                mb.setText(err)
+                mb.setIcon(QMessageBox.Warning)
+                mb.setStyleSheet("QMessageBox QLabel { color: black; }")
+                mb.exec()
         except Exception:
-            pass
+            mb = QMessageBox(self)
+            mb.setWindowTitle("Add Buddy")
+            mb.setText("Network error. Please try again.")
+            mb.setIcon(QMessageBox.Warning)
+            mb.setStyleSheet("QMessageBox QLabel { color: black; }")
+            mb.exec()
 
     def _open_context_menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
@@ -261,7 +308,8 @@ class BuddyListWindow(QMainWindow):
     def _remove_buddy(self, item: QTreeWidgetItem) -> None:
         name = (item.text(0).split(" ", 1)[0]).strip()
         try:
-            r = requests.delete(f"{self._base_url}/api/buddies", json={"owner": self.local_screen_name, "buddy": name}, timeout=5)
+            sess = self._session or requests.Session()
+            r = sess.delete(f"{self._base_url}/api/buddies", json={"buddy": name}, timeout=5)
             if r.ok:
                 self._refresh_buddies()
         except Exception:
@@ -272,12 +320,12 @@ class _NetWorker(QObject):
     messages = Signal(list)
     online = Signal(list)
 
-    def __init__(self, base_url: str, screen_name: str) -> None:
+    def __init__(self, base_url: str, screen_name: str, session=None) -> None:
         super().__init__()
         self.base_url = base_url
         self.screen_name = screen_name
         self._running = True
-        self._session = requests.Session()
+        self._session = session or requests.Session()
 
     def stop(self) -> None:
         self._running = False
