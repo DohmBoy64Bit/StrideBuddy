@@ -32,14 +32,22 @@ def load_settings() -> Dict[str, Any]:
             "last_screen_name": "",
             "save_password": False,
             "auto_login": False,
+            "server_url": "http://127.0.0.1:5000",
         }
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8"))
+        # ensure defaults
+        data.setdefault("last_screen_name", "")
+        data.setdefault("save_password", False)
+        data.setdefault("auto_login", False)
+        data.setdefault("server_url", "http://127.0.0.1:5000")
+        return data
     except Exception:
         return {
             "last_screen_name": "",
             "save_password": False,
             "auto_login": False,
+            "server_url": "http://127.0.0.1:5000",
         }
 
 

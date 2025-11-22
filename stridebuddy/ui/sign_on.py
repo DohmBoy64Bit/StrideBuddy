@@ -16,11 +16,13 @@ from PySide6.QtWidgets import (
     QSpacerItem,
     QSizePolicy,
     QMainWindow,
+    QDialog,
 )
 
 from .. import __app_name__, __version__
 from ..resources import asset_path
 from .buddy_list import BuddyListWindow
+from .setup_dialog import SetupDialog
 import webbrowser
 import requests
 from ..storage import (
@@ -216,6 +218,7 @@ class SignOnWindow(QMainWindow):
         forgot.clicked.connect(self._forgot_password)
         self.saved_hint.clicked.connect(self._clear_saved_password)
         self.help_btn.clicked.connect(self._open_help)
+        self.setup_btn.clicked.connect(self._open_setup)
         # Clear errors when user edits fields
         self.password.textChanged.connect(lambda: self._clear_error())
         self.screen_name.editTextChanged.connect(self._on_screen_name_changed)
@@ -235,8 +238,9 @@ class SignOnWindow(QMainWindow):
         self.signon_btn.setEnabled(False)
         self.statusBar().showMessage("Signing on...", 1500)
         try:
+            base_url = load_settings().get("server_url", "http://127.0.0.1:5000")
             resp = requests.post(
-                "http://127.0.0.1:5000/api/auth/login",
+                f"{base_url}/api/auth/login",
                 json={"screen_name": screen_name, "password": password},
                 timeout=5,
             )
@@ -265,13 +269,16 @@ class SignOnWindow(QMainWindow):
             self.signon_btn.setEnabled(True)
 
     def _get_screen_name(self) -> None:
-        webbrowser.open("http://127.0.0.1:5000/signup")
+        base_url = load_settings().get("server_url", "http://127.0.0.1:5000")
+        webbrowser.open(f"{base_url}/signup")
 
     def _forgot_password(self) -> None:
-        webbrowser.open("http://127.0.0.1:5000/forgot")
+        base_url = load_settings().get("server_url", "http://127.0.0.1:5000")
+        webbrowser.open(f"{base_url}/forgot")
 
     def _open_help(self) -> None:
-        webbrowser.open("http://127.0.0.1:5000/help")
+        base_url = load_settings().get("server_url", "http://127.0.0.1:5000")
+        webbrowser.open(f"{base_url}/help")
 
     def _open_buddy_list(self) -> None:
         # Determine local screen name to pass to child windows
@@ -341,5 +348,16 @@ class SignOnWindow(QMainWindow):
         self.password.clear()
         self.saved_hint.setVisible(False)
         self.statusBar().showMessage("Saved password cleared.", 2000)
+
+    # --- Setup dialog ---
+    def _open_setup(self) -> None:
+        dlg = SetupDialog(self)
+        if dlg.exec() == QDialog.Accepted:
+            st = load_settings()
+            self.screen_name.setEditText(st.get("last_screen_name", ""))
+            self.save_password.setChecked(bool(st.get("save_password")))
+            self.auto_login.setChecked(bool(st.get("auto_login")))
+            pwd = get_saved_password(self.screen_name.currentText().strip())
+            self.saved_hint.setVisible(bool(pwd))
 
 
