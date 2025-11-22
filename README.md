@@ -2,6 +2,12 @@
 
 StrideBuddy is a nostalgic instant messenger inspired by the AIM 5.x era — rebuilt with Python + PySide6 and a tiny Flask backend. It includes a faithful sign‑on UI, a buddy list, message windows with formatting, presence, and a modern settings dialog.
 
+## Screenshot
+
+<p align="center">
+  <img src="https://i.imgur.com/WZcoQCx.png" width="300">
+</p>
+
 ## Features
 - Classic sign‑on with Save password and Auto‑login (OS keychain)
 - Buddy List with groups, add/remove, per‑buddy mute/block, presence (online/away/offline)
