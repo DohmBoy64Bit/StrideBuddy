@@ -446,6 +446,7 @@ class _NetWorker(QObject):
 
     def run(self) -> None:
         last_online_check = 0.0
+        last_typing_check = 0.0
         backoff = 1.0
         while self._running:
             now = time.time()
@@ -482,14 +483,19 @@ class _NetWorker(QObject):
                             continue
                         data = r.json() if r.ok else {}
                         self.online.emit(data.get("statuses", {}))
-                        # also poll typing for this user
-                        rt = self._session.get(f"{self.base_url}/api/messages/typing", timeout=3)
-                        td = rt.json() if rt.ok else {}
-                        if td.get("typing"):
-                            self.typing.emit(td.get("typing"))
                 except Exception:
                     pass
                 last_online_check = now
+            # Poll typing frequently (~1s)
+            if now - last_typing_check > 1.0:
+                try:
+                    rt = self._session.get(f"{self.base_url}/api/messages/typing", timeout=3)
+                    td = rt.json() if rt.ok else {}
+                    if td.get("typing"):
+                        self.typing.emit(td.get("typing"))
+                except Exception:
+                    pass
+                last_typing_check = now
             # Short long-poll messages (keep small so we can stop fast)
             try:
                 r = self._session.get(

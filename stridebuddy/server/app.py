@@ -144,7 +144,8 @@ def create_app() -> Flask:
         to = (data.get("to") or "").strip()
         if not to:
             return jsonify({"ok": False, "error": "to required"}), 400
-        TYPING[(to, user)] = datetime.utcnow() + timedelta(seconds=3)
+        # Keep indicator alive a bit longer than the client poll
+        TYPING[(to, user)] = datetime.utcnow() + timedelta(seconds=6)
         return jsonify({"ok": True})
 
     @app.get("/api/messages/typing")
