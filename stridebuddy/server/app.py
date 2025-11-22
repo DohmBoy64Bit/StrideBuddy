@@ -35,6 +35,7 @@ def create_app() -> Flask:
     ONLINE: dict[str, datetime] = {}
     ACTIVE: dict[str, datetime] = {}
     MESSAGE_QUEUES: dict[str, list[dict]] = {}
+    TYPING: dict[tuple[str, str], datetime] = {}  # key: (recipient, sender) -> expires
 
     @app.get("/")
     def root() -> Tuple[str, int] | str:
@@ -134,6 +135,33 @@ def create_app() -> Flask:
             time.sleep(0.4)
         return jsonify({"ok": True, "messages": []})
 
+    @app.post("/api/messages/typing")
+    def typing_ping():
+        user = session.get("user")
+        if not user:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+        data = request.get_json(silent=True) or {}
+        to = (data.get("to") or "").strip()
+        if not to:
+            return jsonify({"ok": False, "error": "to required"}), 400
+        TYPING[(to, user)] = datetime.utcnow() + timedelta(seconds=3)
+        return jsonify({"ok": True})
+
+    @app.get("/api/messages/typing")
+    def typing_poll():
+        user = session.get("user")
+        if not user:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+        now = datetime.utcnow()
+        active = []
+        # collect senders typing to 'user'
+        for (recipient, sender), expires in list(TYPING.items()):
+            if expires <= now:
+                del TYPING[(recipient, sender)]
+                continue
+            if recipient == user:
+                active.append(sender)
+        return jsonify({"ok": True, "typing": active})
     # --- Buddies API ---
     @app.get("/api/buddies")
     def list_buddies():

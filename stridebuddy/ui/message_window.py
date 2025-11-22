@@ -38,6 +38,7 @@ from PySide6.QtWidgets import QApplication
 from pathlib import Path
 import requests
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PySide6.QtCore import QTimer
 
 
 class MessageWindow(QMainWindow):
@@ -109,6 +110,11 @@ class MessageWindow(QMainWindow):
         # Wire actions
         self.send_btn.clicked.connect(self._send_message)
         self.input.installEventFilter(self)
+        # Typing indicator ping (throttled)
+        self._typing_timer = QTimer(self)
+        self._typing_timer.setInterval(1200)
+        self._typing_timer.timeout.connect(self._send_typing_ping)
+        self.input.textChanged.connect(self._restart_typing_throttle)
         self.warn_btn.clicked.connect(self._warn_peer)
         self.block_btn.clicked.connect(self._block_peer)
 
@@ -225,6 +231,19 @@ class MessageWindow(QMainWindow):
                 json={"to": self.peer_screen_name, "content": plain, "content_html": content_html},
                 timeout=4,
             )
+        except Exception:
+            pass
+
+    def _restart_typing_throttle(self) -> None:
+        # Restart the throttle timer so we ping at most every interval while typing
+        if not self._typing_timer.isActive():
+            self._typing_timer.start()
+
+    def _send_typing_ping(self) -> None:
+        try:
+            base_url = self.settings.get("server_url", "http://127.0.0.1:5000")
+            sess = QApplication.instance().property("sb_session") or requests.Session()
+            sess.post(f"{base_url}/api/messages/typing", json={"to": self.peer_screen_name}, timeout=3)
         except Exception:
             pass
 

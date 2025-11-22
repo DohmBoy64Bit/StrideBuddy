@@ -85,6 +85,9 @@ class BuddyListWindow(QMainWindow):
         )
         footer.addWidget(self.add_btn)
         footer.addStretch(1)
+        self.conn_label = QLabel("Connected")
+        self.conn_label.setStyleSheet("QLabel { color: #666666; }")
+        footer.addWidget(self.conn_label)
         footer.addWidget(self.signoff_btn)
         root.addLayout(footer)
 
@@ -111,6 +114,8 @@ class BuddyListWindow(QMainWindow):
         self._net_thread.started.connect(self._net_worker.run)
         self._net_worker.messages.connect(self._on_messages)
         self._net_worker.online.connect(self._on_online)
+        self._net_worker.typing.connect(self._on_typing)
+        self._net_worker.state.connect(self._on_state)
         self._net_thread.start()
         # Initial fetch of buddies from server
         self._refresh_buddies()
@@ -228,6 +233,31 @@ class BuddyListWindow(QMainWindow):
                     child.setText(0, f"{base} {status}{tag}")
         except Exception:
             pass
+
+    def _on_typing(self, typers: list[str]) -> None:
+        # Show typing indicator on corresponding message windows
+        if not hasattr(self, "_open_msgs"):
+            return
+        for name in typers or []:
+            for w in self._open_msgs:
+                if getattr(w, "peer_screen_name", "") == name and hasattr(w, "statusBar"):
+                    w.statusBar().showMessage(f"{name} is typing…", 1500)
+
+    def _on_state(self, st: str) -> None:
+        if not hasattr(self, "conn_label"):
+            return
+        if st == "connected":
+            self.conn_label.setText("Connected")
+            self.conn_label.setStyleSheet("QLabel { color: #16a34a; }")
+        elif st == "reconnecting":
+            self.conn_label.setText("Reconnecting…")
+            self.conn_label.setStyleSheet("QLabel { color: #ca8a04; }")
+        elif st == "unauthorized":
+            self.conn_label.setText("Unauthorized")
+            self.conn_label.setStyleSheet("QLabel { color: #dc2626; }")
+        else:
+            self.conn_label.setText(st)
+            self.conn_label.setStyleSheet("QLabel { color: #666666; }")
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         # Ensure worker stops
@@ -395,6 +425,8 @@ class BuddyListWindow(QMainWindow):
 class _NetWorker(QObject):
     messages = Signal(list)
     online = Signal(object)  # dict name->status
+    typing = Signal(list)
+    state = Signal(str)  # "connected"|"reconnecting"|"unauthorized"
 
     def __init__(self, base_url: str, screen_name: str, session=None, get_active=None, get_names=None) -> None:
         super().__init__()
@@ -414,6 +446,7 @@ class _NetWorker(QObject):
 
     def run(self) -> None:
         last_online_check = 0.0
+        backoff = 1.0
         while self._running:
             now = time.time()
             # Heartbeat
@@ -425,8 +458,13 @@ class _NetWorker(QObject):
                 except Exception:
                     active = False
                 self._session.post(f"{self.base_url}/api/presence/heartbeat", json={"active": active}, timeout=3)
+                self.state.emit("connected")
+                backoff = 1.0
             except Exception:
-                pass
+                self.state.emit("reconnecting")
+                time.sleep(min(backoff, 8.0))
+                backoff = min(backoff * 2.0, 8.0)
+                continue
             # Online list every 7s
             if now - last_online_check > 7:
                 try:
@@ -438,8 +476,17 @@ class _NetWorker(QObject):
                         names = []
                     if names:
                         r = self._session.get(f"{self.base_url}/api/presence/status", params={"names": ",".join(names)}, timeout=4)
+                        if r.status_code == 401:
+                            self.state.emit("unauthorized")
+                            time.sleep(2.0)
+                            continue
                         data = r.json() if r.ok else {}
                         self.online.emit(data.get("statuses", {}))
+                        # also poll typing for this user
+                        rt = self._session.get(f"{self.base_url}/api/messages/typing", timeout=3)
+                        td = rt.json() if rt.ok else {}
+                        if td.get("typing"):
+                            self.typing.emit(td.get("typing"))
                 except Exception:
                     pass
                 last_online_check = now
@@ -450,6 +497,10 @@ class _NetWorker(QObject):
                     params={"screen_name": self.screen_name, "timeout": 3},
                     timeout=4,
                 )
+                if r.status_code == 401:
+                    self.state.emit("unauthorized")
+                    time.sleep(2.0)
+                    continue
                 data = r.json() if r.ok else {}
                 msgs = data.get("messages", [])
                 if msgs:
