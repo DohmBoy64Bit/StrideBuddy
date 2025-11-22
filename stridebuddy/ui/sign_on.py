@@ -199,6 +199,11 @@ class SignOnWindow(QMainWindow):
             "QPushButton { border: 1px solid #6ee7b7; border-radius: 4px; padding: 4px 10px; }"
             "QPushButton:hover { border-color: #10b981; }"
         )
+        # Add green border to Setup as well
+        self.setup_btn.setStyleSheet(
+            "QPushButton { border: 1px solid #6ee7b7; border-radius: 4px; padding: 4px 10px; }"
+            "QPushButton:hover { border-color: #10b981; }"
+        )
         button_row.addWidget(self.help_btn)
         button_row.addWidget(self.setup_btn)
         button_row.addStretch(1)
