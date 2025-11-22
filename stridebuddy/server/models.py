@@ -29,5 +29,7 @@ class Buddy(Base):
     owner_screen_name: Mapped[str] = mapped_column(String(32), index=True)
     buddy_screen_name: Mapped[str] = mapped_column(String(32), index=True)
     group_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    muted: Mapped[int] = mapped_column(default=0)
+    blocked: Mapped[int] = mapped_column(default=0)
 
 

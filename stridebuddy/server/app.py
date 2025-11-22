@@ -33,6 +33,7 @@ def create_app() -> Flask:
 
     # In-memory presence and message queues (dev prototype)
     ONLINE: dict[str, datetime] = {}
+    ACTIVE: dict[str, datetime] = {}
     MESSAGE_QUEUES: dict[str, list[dict]] = {}
 
     @app.get("/")
@@ -62,14 +63,38 @@ def create_app() -> Flask:
         user = session.get("user")
         if not user:
             return jsonify({"ok": False, "error": "unauthorized"}), 401
+        data = request.get_json(silent=True) or {}
         ONLINE[user] = datetime.utcnow()
+        if data.get("active"):
+            ACTIVE[user] = datetime.utcnow()
         return jsonify({"ok": True})
 
     @app.get("/api/presence/online")
     def presence_online():
+        # Backward-compat simple list
         now = datetime.utcnow()
-        online = [name for name, ts in ONLINE.items() if (now - ts) < timedelta(seconds=15)]
+        online = [name for name, ts in ONLINE.items() if (now - ts) < timedelta(seconds=20)]
         return jsonify({"ok": True, "online": online})
+
+    @app.get("/api/presence/status")
+    def presence_status():
+        names_param = (request.args.get("names") or "").strip()
+        names = [n for n in (names_param.split(",") if names_param else []) if n]
+        now = datetime.utcnow()
+        statuses = {}
+        online_window = timedelta(seconds=20)
+        idle_window = timedelta(minutes=5)
+        for name in names:
+            last = ONLINE.get(name)
+            if not last or (now - last) > online_window:
+                statuses[name] = "offline"
+                continue
+            last_active = ACTIVE.get(name, last)
+            if (now - last_active) >= idle_window:
+                statuses[name] = "away"
+            else:
+                statuses[name] = "online"
+        return jsonify({"ok": True, "statuses": statuses})
 
     @app.post("/api/messages/send")
     def send_message():
@@ -117,7 +142,7 @@ def create_app() -> Flask:
             return jsonify({"ok": False, "error": "unauthorized"}), 401
         with SessionLocal() as db:
             rows = db.query(Buddy).filter(Buddy.owner_screen_name == owner).all()
-            data = [{"buddy": b.buddy_screen_name, "group": b.group_name or ""} for b in rows]
+            data = [{"buddy": b.buddy_screen_name, "group": b.group_name or "", "muted": int(b.muted or 0), "blocked": int(b.blocked or 0)} for b in rows]
         return jsonify({"ok": True, "buddies": data})
 
     @app.post("/api/buddies")
@@ -140,6 +165,42 @@ def create_app() -> Flask:
             if exists:
                 return jsonify({"ok": True})
             db.add(Buddy(owner_screen_name=owner, buddy_screen_name=buddy, group_name=group))
+            db.commit()
+        return jsonify({"ok": True})
+
+    @app.post("/api/buddies/rename_group")
+    def rename_group():
+        owner = session.get("user")
+        if not owner:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+        data = request.get_json(silent=True) or {}
+        old = (data.get("old_group") or "").strip() or None
+        new = (data.get("new_group") or "").strip() or None
+        if old is None or new is None:
+            return jsonify({"ok": False, "error": "old_group and new_group required"}), 400
+        with SessionLocal() as db:
+            db.query(Buddy).filter(Buddy.owner_screen_name == owner, Buddy.group_name == old).update({Buddy.group_name: new})
+            db.commit()
+        return jsonify({"ok": True})
+
+    @app.post("/api/buddies/set_flags")
+    def set_flags():
+        owner = session.get("user")
+        if not owner:
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+        data = request.get_json(silent=True) or {}
+        buddy = (data.get("buddy") or "").strip()
+        if not buddy:
+            return jsonify({"ok": False, "error": "buddy required"}), 400
+        fields = {}
+        if "muted" in data:
+            fields[Buddy.muted] = 1 if data.get("muted") else 0
+        if "blocked" in data:
+            fields[Buddy.blocked] = 1 if data.get("blocked") else 0
+        if not fields:
+            return jsonify({"ok": False, "error": "no flags to update"}), 400
+        with SessionLocal() as db:
+            db.query(Buddy).filter(Buddy.owner_screen_name == owner, Buddy.buddy_screen_name == buddy).update(fields)
             db.commit()
         return jsonify({"ok": True})
 
@@ -258,8 +319,17 @@ def _ensure_buddy_table(engine) -> None:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     owner_screen_name VARCHAR(32) NOT NULL,
                     buddy_screen_name VARCHAR(32) NOT NULL,
-                    group_name VARCHAR(64)
+                    group_name VARCHAR(64),
+                    muted INTEGER DEFAULT 0,
+                    blocked INTEGER DEFAULT 0
                 )
             """))
+        else:
+            # add columns if missing
+            cols = {row[1] for row in conn.execute(text("PRAGMA table_info(buddies)")).fetchall()}
+            if "muted" not in cols:
+                conn.execute(text("ALTER TABLE buddies ADD COLUMN muted INTEGER DEFAULT 0"))
+            if "blocked" not in cols:
+                conn.execute(text("ALTER TABLE buddies ADD COLUMN blocked INTEGER DEFAULT 0"))
 
 

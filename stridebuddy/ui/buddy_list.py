@@ -66,6 +66,10 @@ class BuddyListWindow(QMainWindow):
         # Sample data (placeholder)
         self._populate_sample()
 
+        # Enable basic drag & drop within a group (optional polish)
+        self.tree.setDragDropMode(QTreeWidget.InternalMove)
+        self.tree.setDefaultDropAction(Qt.MoveAction)
+
         # Footer buttons
         footer = QHBoxLayout()
         self.add_btn = QPushButton("&Add Buddy")
@@ -93,7 +97,16 @@ class BuddyListWindow(QMainWindow):
         self._base_url = load_settings().get("server_url", "http://127.0.0.1:5000")
         self._session = QApplication.instance().property("sb_session")
         self._net_thread = QThread(self)
-        self._net_worker = _NetWorker(self._base_url, self.local_screen_name, self._session)
+        # Track last user activity (typing status message or focusing window)
+        self._last_input = time.time()
+        self.status_edit.textChanged.connect(lambda: setattr(self, "_last_input", time.time()))
+        self._net_worker = _NetWorker(
+            self._base_url,
+            self.local_screen_name,
+            self._session,
+            get_active=lambda: (time.time() - getattr(self, "_last_input", 0)) < 60,
+            get_names=lambda: list((self._buddy_flags or {}).keys()),
+        )
         self._net_worker.moveToThread(self._net_thread)
         self._net_thread.started.connect(self._net_worker.run)
         self._net_worker.messages.connect(self._on_messages)
@@ -169,7 +182,14 @@ class BuddyListWindow(QMainWindow):
         # Notify via tray
         tray = QApplication.instance().property("sb_tray")
         if tray:
-            tray.showMessage(sender, text[:80], QIcon(asset_path("sb_runner.svg")), 2500)
+            # Respect mute flag
+            flags = (self._buddy_flags or {}).get(sender, {})
+            if not bool(flags.get("muted")):
+                tray.showMessage(sender, text[:80], QIcon(asset_path("sb_runner.svg")), 2500)
+        # Drop entirely if blocked
+        flags = (self._buddy_flags or {}).get(sender, {})
+        if bool(flags.get("blocked")):
+            return
         # Open or find message window
         if not hasattr(self, "_open_msgs"):
             self._open_msgs = []
@@ -187,16 +207,25 @@ class BuddyListWindow(QMainWindow):
         if hasattr(target, "append_incoming"):
             target.append_incoming(text, html)
 
-    def _on_online(self, names: list[str]) -> None:
-        # Update simple suffix on known buddies
+    def _on_online(self, statuses: object) -> None:
+        # Update status (online/away/offline) and preserve flags
         try:
+            names = statuses or {}
             for i in range(self.tree.topLevelItemCount()):
                 group = self.tree.topLevelItem(i)
                 for j in range(group.childCount()):
                     child = group.child(j)
                     base = (child.text(0).split(" ", 1)[0]).strip()
-                    status = "(online)" if base in names else "(away)"
-                    child.setText(0, f"{base} {status}")
+                    state = str(names.get(base, "offline"))
+                    status = {"online": "(online)", "away": "(away)", "offline": "(offline)"}.get(state, "(offline)")
+                    # Preserve flags in the label
+                    flags = (self._buddy_flags or {}).get(base, {})
+                    tag = ""
+                    if bool(flags.get("blocked")):
+                        tag = " [blocked]"
+                    elif bool(flags.get("muted")):
+                        tag = " [muted]"
+                    child.setText(0, f"{base} {status}{tag}")
         except Exception:
             pass
 
@@ -219,9 +248,13 @@ class BuddyListWindow(QMainWindow):
             buddies = data.get("buddies", [])
             self.tree.clear()
             group_map: dict[str, QTreeWidgetItem] = {}
+            self._buddy_flags = {}
             for entry in buddies:
                 bname = entry.get("buddy") or ""
                 grp = entry.get("group") or "Buddies"
+                muted = bool(int(entry.get("muted", 0)))
+                blocked = bool(int(entry.get("blocked", 0)))
+                self._buddy_flags[bname] = {"muted": muted, "blocked": blocked}
                 if grp not in group_map:
                     group_item = QTreeWidgetItem([grp])
                     group_item.setFirstColumnSpanned(True)
@@ -229,7 +262,12 @@ class BuddyListWindow(QMainWindow):
                     self.tree.addTopLevelItem(group_item)
                     group_item.setExpanded(True)
                     group_map[grp] = group_item
-                child = QTreeWidgetItem([f"{bname} (away)"])
+                suffix = " (away)"
+                if blocked:
+                    suffix += " [blocked]"
+                elif muted:
+                    suffix += " [muted]"
+                child = QTreeWidgetItem([f"{bname}{suffix}"])
                 group_map[grp].addChild(child)
             if not buddies:
                 # keep sample if empty
@@ -295,15 +333,27 @@ class BuddyListWindow(QMainWindow):
 
     def _open_context_menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
-        if not item or item.childCount() > 0:
+        if not item:
             return
         menu = QMenu(self)
-        # Ensure visibility on dark backgrounds
-        menu.setStyleSheet(
-            "QMenu { color: white; }"
-            "QMenu::item:selected { background: #1e73be; }"
-        )
-        menu.addAction("Remove Buddy", lambda: self._remove_buddy(item))
+        menu.setStyleSheet("QMenu { color: white; } QMenu::item:selected { background: #1e73be; }")
+        if item.childCount() > 0:  # group
+            grp_name = item.text(0)
+            menu.addAction("Rename Group...", lambda: self._rename_group(grp_name))
+        else:  # buddy
+            name = (item.text(0).split(" ", 1)[0]).strip()
+            menu.addAction("Remove Buddy", lambda: self._remove_buddy(item))
+            flags = (self._buddy_flags or {}).get(name, {})
+            muted = bool(flags.get("muted"))
+            blocked = bool(flags.get("blocked"))
+            if blocked:
+                menu.addAction("Unblock", lambda: self._set_flags(name, blocked=False))
+            else:
+                menu.addAction("Block", lambda: self._set_flags(name, blocked=True))
+            if muted:
+                menu.addAction("Unmute", lambda: self._set_flags(name, muted=False))
+            else:
+                menu.addAction("Mute", lambda: self._set_flags(name, muted=True))
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     def _remove_buddy(self, item: QTreeWidgetItem) -> None:
@@ -316,17 +366,44 @@ class BuddyListWindow(QMainWindow):
         except Exception:
             pass
 
+    def _rename_group(self, old: str) -> None:
+        new, ok = QInputDialog.getText(self, "Rename Group", f"New name for '{old}':")
+        if not ok or not new.strip() or new.strip() == old:
+            return
+        try:
+            sess = self._session or requests.Session()
+            r = sess.post(f"{self._base_url}/api/buddies/rename_group", json={"old_group": old, "new_group": new.strip()}, timeout=5)
+            if r.ok:
+                self._refresh_buddies()
+        except Exception:
+            pass
+
+    def _set_flags(self, name: str, muted: bool | None = None, blocked: bool | None = None) -> None:
+        payload = {"buddy": name}
+        if muted is not None:
+            payload["muted"] = muted
+        if blocked is not None:
+            payload["blocked"] = blocked
+        try:
+            sess = self._session or requests.Session()
+            r = sess.post(f"{self._base_url}/api/buddies/set_flags", json=payload, timeout=5)
+            if r.ok:
+                self._refresh_buddies()
+        except Exception:
+            pass
 
 class _NetWorker(QObject):
     messages = Signal(list)
-    online = Signal(list)
+    online = Signal(object)  # dict name->status
 
-    def __init__(self, base_url: str, screen_name: str, session=None) -> None:
+    def __init__(self, base_url: str, screen_name: str, session=None, get_active=None, get_names=None) -> None:
         super().__init__()
         self.base_url = base_url
         self.screen_name = screen_name
         self._running = True
         self._session = session or requests.Session()
+        self._get_active = get_active  # callable -> bool
+        self._get_names = get_names    # callable -> list[str]
 
     def stop(self) -> None:
         self._running = False
@@ -341,15 +418,28 @@ class _NetWorker(QObject):
             now = time.time()
             # Heartbeat
             try:
-                self._session.post(f"{self.base_url}/api/presence/heartbeat", json={"screen_name": self.screen_name}, timeout=3)
+                active = False
+                try:
+                    if self._get_active:
+                        active = bool(self._get_active())
+                except Exception:
+                    active = False
+                self._session.post(f"{self.base_url}/api/presence/heartbeat", json={"active": active}, timeout=3)
             except Exception:
                 pass
             # Online list every 7s
             if now - last_online_check > 7:
                 try:
-                    r = self._session.get(f"{self.base_url}/api/presence/online", timeout=3)
-                    data = r.json() if r.ok else {}
-                    self.online.emit(data.get("online", []))
+                    names = []
+                    try:
+                        if self._get_names:
+                            names = list(self._get_names() or [])
+                    except Exception:
+                        names = []
+                    if names:
+                        r = self._session.get(f"{self.base_url}/api/presence/status", params={"names": ",".join(names)}, timeout=4)
+                        data = r.json() if r.ok else {}
+                        self.online.emit(data.get("statuses", {}))
                 except Exception:
                     pass
                 last_online_check = now
