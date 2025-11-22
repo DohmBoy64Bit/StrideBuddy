@@ -22,3 +22,12 @@ class User(Base):
     reset_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class Buddy(Base):
+    __tablename__ = "buddies"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_screen_name: Mapped[str] = mapped_column(String(32), index=True)
+    buddy_screen_name: Mapped[str] = mapped_column(String(32), index=True)
+    group_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+

@@ -36,6 +36,7 @@ from ..resources import asset_path
 from ..storage import load_settings, get_app_dir
 from PySide6.QtWidgets import QApplication
 from pathlib import Path
+import requests
 
 
 class MessageWindow(QMainWindow):
@@ -200,6 +201,12 @@ class MessageWindow(QMainWindow):
         # Logging
         if self.settings.get("chat_transcripts_enabled", False):
             self._log_message(self.local_screen_name, plain)
+        # Send to peer via server
+        try:
+            base_url = self.settings.get("server_url", "http://127.0.0.1:5000")
+            requests.post(f"{base_url}/api/messages/send", json={"from": self.local_screen_name, "to": self.peer_screen_name, "content": plain}, timeout=4)
+        except Exception:
+            pass
 
     def _warn_peer(self) -> None:
         self.statusBar().showMessage("Warned user (placeholder).", 2000)
@@ -307,5 +314,13 @@ class MessageWindow(QMainWindow):
         except Exception:
             # Best-effort logging; ignore errors
             pass
+
+    # --- External message API ---
+    def append_incoming(self, text: str) -> None:
+        if not text:
+            return
+        self._append_to_transcript(self.peer_screen_name, text=text)
+        if self.settings.get("chat_transcripts_enabled", False):
+            self._log_message(self.peer_screen_name, text)
 
 

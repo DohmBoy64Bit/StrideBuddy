@@ -10,8 +10,9 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
 import secrets
+import time
 
-from .models import Base, User
+from .models import Base, User, Buddy
 
 
 def get_db_url() -> str:
@@ -26,7 +27,12 @@ def create_app() -> Flask:
     engine = create_engine(get_db_url(), future=True)
     Base.metadata.create_all(engine)
     _ensure_optional_columns(engine)
+    _ensure_buddy_table(engine)
     SessionLocal = sessionmaker(bind=engine, future=True)
+
+    # In-memory presence and message queues (dev prototype)
+    ONLINE: dict[str, datetime] = {}
+    MESSAGE_QUEUES: dict[str, list[dict]] = {}
 
     @app.get("/")
     def root() -> Tuple[str, int] | str:
@@ -48,6 +54,89 @@ def create_app() -> Flask:
     @app.route("/help", methods=["GET"], strict_slashes=False)
     def help_page() -> str:
         return render_template("help.html")
+
+    # --- Presence & Messaging (prototype) ---
+    @app.post("/api/presence/heartbeat")
+    def presence_heartbeat():
+        data = request.get_json(silent=True) or {}
+        screen_name = (data.get("screen_name") or "").strip()
+        if not screen_name:
+            return jsonify({"ok": False, "error": "screen_name required"}), 400
+        ONLINE[screen_name] = datetime.utcnow()
+        return jsonify({"ok": True})
+
+    @app.get("/api/presence/online")
+    def presence_online():
+        now = datetime.utcnow()
+        online = [name for name, ts in ONLINE.items() if (now - ts) < timedelta(seconds=15)]
+        return jsonify({"ok": True, "online": online})
+
+    @app.post("/api/messages/send")
+    def send_message():
+        data = request.get_json(silent=True) or {}
+        sender = (data.get("from") or "").strip()
+        to = (data.get("to") or "").strip()
+        content = (data.get("content") or "").strip()
+        if not sender or not to or not content:
+            return jsonify({"ok": False, "error": "from, to, content required"}), 400
+        msg = {"from": sender, "to": to, "content": content, "ts": datetime.utcnow().isoformat()}
+        MESSAGE_QUEUES.setdefault(to, []).append(msg)
+        return jsonify({"ok": True})
+
+    @app.get("/api/messages/poll")
+    def poll_messages():
+        screen_name = (request.args.get("screen_name") or "").strip()
+        timeout = int(request.args.get("timeout", "15"))
+        if not screen_name:
+            return jsonify({"ok": False, "error": "screen_name required"}), 400
+        deadline = time.time() + min(timeout, 30)
+        while time.time() < deadline:
+            queue = MESSAGE_QUEUES.get(screen_name, [])
+            if queue:
+                out = queue.copy()
+                MESSAGE_QUEUES[screen_name] = []
+                return jsonify({"ok": True, "messages": out})
+            time.sleep(0.4)
+        return jsonify({"ok": True, "messages": []})
+
+    # --- Buddies API ---
+    @app.get("/api/buddies")
+    def list_buddies():
+        owner = (request.args.get("owner") or "").strip()
+        if not owner:
+            return jsonify({"ok": False, "error": "owner required"}), 400
+        with SessionLocal() as session:
+            rows = session.query(Buddy).filter(Buddy.owner_screen_name == owner).all()
+            data = [{"buddy": b.buddy_screen_name, "group": b.group_name or ""} for b in rows]
+        return jsonify({"ok": True, "buddies": data})
+
+    @app.post("/api/buddies")
+    def add_buddy():
+        data = request.get_json(silent=True) or {}
+        owner = (data.get("owner") or "").strip()
+        buddy = (data.get("buddy") or "").strip()
+        group = (data.get("group") or "").strip() or None
+        if not owner or not buddy:
+            return jsonify({"ok": False, "error": "owner and buddy required"}), 400
+        with SessionLocal() as session:
+            exists = session.scalar(select(Buddy).where(Buddy.owner_screen_name == owner, Buddy.buddy_screen_name == buddy))
+            if exists:
+                return jsonify({"ok": True})
+            session.add(Buddy(owner_screen_name=owner, buddy_screen_name=buddy, group_name=group))
+            session.commit()
+        return jsonify({"ok": True})
+
+    @app.delete("/api/buddies")
+    def delete_buddy():
+        data = request.get_json(silent=True) or {}
+        owner = (data.get("owner") or "").strip()
+        buddy = (data.get("buddy") or "").strip()
+        if not owner or not buddy:
+            return jsonify({"ok": False, "error": "owner and buddy required"}), 400
+        with SessionLocal() as session:
+            session.query(Buddy).filter(Buddy.owner_screen_name == owner, Buddy.buddy_screen_name == buddy).delete()
+            session.commit()
+        return jsonify({"ok": True})
 
     @app.post("/api/auth/signup")
     def api_signup():
@@ -138,5 +227,18 @@ def _ensure_optional_columns(engine) -> None:
             conn.execute(text("ALTER TABLE users ADD COLUMN reset_code VARCHAR(32)"))
         if "reset_expires_at" not in cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN reset_expires_at DATETIME"))
+
+def _ensure_buddy_table(engine) -> None:
+    with engine.begin() as conn:
+        tables = {row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
+        if "buddies" not in tables:
+            conn.execute(text("""
+                CREATE TABLE buddies (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_screen_name VARCHAR(32) NOT NULL,
+                    buddy_screen_name VARCHAR(32) NOT NULL,
+                    group_name VARCHAR(64)
+                )
+            """))
 
 
