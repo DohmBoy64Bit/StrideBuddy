@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StrideBuddy — Help</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+    <link rel="icon" href="{{ url_for('static', filename='runner.svg') }}" type="image/svg+xml" />
+    <style>
+      .content h2 { margin: 16px 0 8px; font-size: 18px; }
+      .content p { color:#374151; line-height:1.5; margin: 6px 0 12px; }
+      .content a { color:#1e73be; text-decoration:none; }
+      .content a:hover{ text-decoration:underline; }
+      .kbd{padding:2px 6px;border:1px solid #d1d5db;border-radius:6px;background:#f8fafc;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;}
+      ul{margin:6px 0 12px 20px;}
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="card">
+        <div class="brand">
+          <img src="{{ url_for('static', filename='runner.svg') }}" alt="StrideBuddy" />
+          <h1>StrideBuddy Help</h1>
+        </div>
+        <div class="content">
+          <h2>Getting started</h2>
+          <p>First, create an account on the signup page, then sign in from the desktop app.</p>
+          <ul>
+            <li><a href="{{ url_for('signup') }}">Create a screen name</a></li>
+            <li><a href="{{ url_for('forgot') }}">Forgot password</a></li>
+          </ul>
+
+          <h2>Sign in options</h2>
+          <p><b>Save password</b> stores your password in the system keychain. <b>Auto‑login</b> signs you in automatically next launch if a saved password exists.</p>
+
+          <h2>Buddy List</h2>
+          <p>Double‑click a buddy to open a message window. Use <b>Sign Off</b> to return to the sign‑on screen.</p>
+
+          <h2>Messaging</h2>
+          <p>Use the toolbar to format your message (B / I / U, color, link, emoji). Send with <span class="kbd">Enter</span> or <span class="kbd">Ctrl</span>+<span class="kbd">Enter</span>.</p>
+
+          <h2>Troubleshooting</h2>
+          <ul>
+            <li>If sign‑in fails, ensure the server is running at <span class="kbd">http://127.0.0.1:5000</span>.</li>
+            <li>Can’t open links? Make sure your browser is set as default.</li>
+          </ul>
+        </div>
+      </div>
+      <footer>© {{ 2025 }} StrideBuddy</footer>
+    </div>
+  </body>
+  </html>
+
+

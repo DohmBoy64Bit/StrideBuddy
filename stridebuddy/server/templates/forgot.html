@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StrideBuddy — Forgot Password</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+    <link rel="icon" href="{{ url_for('static', filename='runner.svg') }}" type="image/svg+xml" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="card">
+        <div class="brand">
+          <img src="{{ url_for('static', filename='runner.svg') }}" alt="StrideBuddy" />
+          <h1>StrideBuddy</h1>
+        </div>
+        <h2>Reset your password</h2>
+        <div id="step1">
+          <label>Screen name
+            <input type="text" id="sn" minlength="2" maxlength="32" required placeholder="Your screen name" />
+          </label>
+          <button id="send-code">Send reset code</button>
+          <p class="hint">We'll show a temporary code here (dev mode) you can use below.</p>
+          <p class="msg" id="msg1" hidden></p>
+        </div>
+
+        <hr style="border:none;border-top:1px solid #eee;margin:18px 0;" />
+
+        <div id="step2">
+          <label>Reset code
+            <input type="text" id="code" inputmode="numeric" placeholder="6-digit code" />
+          </label>
+          <label>New password
+            <input type="password" id="newpass" minlength="4" placeholder="Enter a new password" />
+          </label>
+          <button id="do-reset">Reset password</button>
+          <p class="msg" id="msg2" hidden></p>
+        </div>
+      </div>
+      <footer>© {{ 2025 }} StrideBuddy</footer>
+    </div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const sn = $('sn'), msg1 = $('msg1'), code = $('code'), newpass = $('newpass'), msg2 = $('msg2');
+      $('send-code').addEventListener('click', async () => {
+        msg1.hidden = true;
+        const res = await fetch('/api/auth/request_reset', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ screen_name: sn.value.trim() })
+        });
+        const json = await res.json();
+        msg1.hidden = false;
+        if (json.ok) {
+          msg1.className = 'msg ok';
+          msg1.textContent = json.dev_code ? ('Your reset code (dev): ' + json.dev_code) : 'Reset code sent.';
+          if (json.dev_code) code.value = json.dev_code;
+        } else {
+          msg1.className = 'msg err';
+          msg1.textContent = json.error || 'Something went wrong.';
+        }
+      });
+      $('do-reset').addEventListener('click', async () => {
+        msg2.hidden = true;
+        const payload = { screen_name: sn.value.trim(), code: code.value.trim(), new_password: newpass.value };
+        const res = await fetch('/api/auth/reset', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        msg2.hidden = false;
+        if (json.ok) {
+          msg2.className = 'msg ok';
+          msg2.textContent = 'Password reset! You can now sign in from the app.';
+          newpass.value=''; code.value='';
+        } else {
+          msg2.className = 'msg err';
+          msg2.textContent = json.error || 'Invalid code.';
+        }
+      });
+    </script>
+  </body>
+  </html>
+
+

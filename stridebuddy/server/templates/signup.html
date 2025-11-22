@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StrideBuddy — Create Your Screen Name</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+    <link rel="icon" href="{{ url_for('static', filename='runner.svg') }}" type="image/svg+xml" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="card">
+        <div class="brand">
+          <img src="{{ url_for('static', filename='runner.svg') }}" alt="StrideBuddy" />
+          <h1>StrideBuddy</h1>
+        </div>
+        <h2>Create your screen name</h2>
+        <form id="signup-form">
+          <label>Screen name
+            <input type="text" name="screen_name" minlength="2" maxlength="32" required placeholder="e.g. coolrunner" />
+          </label>
+          <label>Password
+            <input type="password" name="password" minlength="4" required placeholder="Choose a password" />
+          </label>
+          <button type="submit">Create account</button>
+          <p class="hint">Already have one? Just sign in from the app.</p>
+          <p class="msg" id="msg" hidden></p>
+        </form>
+      </div>
+      <footer>© {{ 2025 }} StrideBuddy</footer>
+    </div>
+    <script>
+      const form = document.getElementById('signup-form');
+      const msg = document.getElementById('msg');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        msg.hidden = true;
+        const data = Object.fromEntries(new FormData(form).entries());
+        const res = await fetch('/api/auth/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+        const json = await res.json();
+        msg.hidden = false;
+        if (json.ok) {
+          msg.className = 'msg ok';
+          msg.textContent = 'Account created! You can close this tab and sign in from the app.';
+          form.reset();
+        } else {
+          msg.className = 'msg err';
+          msg.textContent = json.error || 'Something went wrong.';
+        }
+      });
+    </script>
+  </body>
+  </html>
+
+
