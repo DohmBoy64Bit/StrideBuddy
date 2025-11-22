@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QMainWindow,
     QDialog,
+    QApplication,
 )
 
 from .. import __app_name__, __version__
@@ -32,6 +33,7 @@ from ..storage import (
     set_saved_password,
     delete_saved_password,
 )
+from ..style import apply_stridebuddy_style
 
 
 class LinkLabel(QLabel):
@@ -252,13 +254,14 @@ class SignOnWindow(QMainWindow):
             data = resp.json() if resp.headers.get("content-type","").startswith("application/json") else {}
             if resp.ok and data.get("ok"):
                 self.statusBar().showMessage("Signed on.", 1000)
-                # Persist preferences
-                current = {
+                # Persist preferences without clobbering other settings
+                st = load_settings()
+                st.update({
                     "last_screen_name": screen_name,
                     "save_password": self.save_password.isChecked(),
                     "auto_login": self.auto_login.isChecked(),
-                }
-                save_settings(current)
+                })
+                save_settings(st)
                 if self.save_password.isChecked():
                     set_saved_password(screen_name, password)
                     self.saved_hint.setVisible(True)
@@ -359,6 +362,8 @@ class SignOnWindow(QMainWindow):
         dlg = SetupDialog(self)
         if dlg.exec() == QDialog.Accepted:
             st = load_settings()
+            # Re-apply style globally based on new settings
+            apply_stridebuddy_style(QApplication.instance(), st)
             self.screen_name.setEditText(st.get("last_screen_name", ""))
             self.save_password.setChecked(bool(st.get("save_password")))
             self.auto_login.setChecked(bool(st.get("auto_login")))

@@ -33,6 +33,9 @@ from PySide6.QtWidgets import (
 
 from .. import __app_name__
 from ..resources import asset_path
+from ..storage import load_settings, get_app_dir
+from PySide6.QtWidgets import QApplication
+from pathlib import Path
 
 
 class MessageWindow(QMainWindow):
@@ -46,6 +49,7 @@ class MessageWindow(QMainWindow):
         self.setWindowIcon(QIcon(asset_path("sb_runner.svg")))
         self.setMinimumSize(520, 520)
         self.resize(540, 560)
+        self.settings = load_settings()
 
         # Menu bar (placeholder items for nostalgia)
         self._build_menubar()
@@ -67,6 +71,14 @@ class MessageWindow(QMainWindow):
         self.input = QTextEdit()
         self.input.setPlaceholderText("Type a message…")
         self.input.setFixedHeight(110)
+        # Apply default style for new typing
+        typing_fmt = QTextCharFormat()
+        if self.settings.get("chat_default_bold"):
+            typing_fmt.setFontWeight(QFont.Weight.Bold)
+        if self.settings.get("chat_default_italic"):
+            typing_fmt.setFontItalic(True)
+        if typing_fmt.fontWeight() != QFont.Weight.Normal or typing_fmt.fontItalic():
+            self.input.mergeCurrentCharFormat(typing_fmt)
 
         # Formatting toolbar (lightweight, text-based)
         self.fmt_toolbar = QToolBar()
@@ -178,7 +190,16 @@ class MessageWindow(QMainWindow):
         frag = QTextDocumentFragment(self.input.document())
         self._append_to_transcript(self.local_screen_name, fragment=frag)
         self.input.clear()
-        # TODO: hook to actual send over network
+        # Notifications
+        if self.settings.get("notifications_sounds", True):
+            QApplication.beep()
+        if self.settings.get("notifications_toasts", True):
+            tray = QApplication.instance().property("sb_tray")
+            if tray:
+                tray.showMessage(self.peer_screen_name, plain[:80], QIcon(asset_path("sb_runner.svg")), 2000)
+        # Logging
+        if self.settings.get("chat_transcripts_enabled", False):
+            self._log_message(self.local_screen_name, plain)
 
     def _warn_peer(self) -> None:
         self.statusBar().showMessage("Warned user (placeholder).", 2000)
@@ -272,5 +293,19 @@ class MessageWindow(QMainWindow):
         self.act_bold.blockSignals(False)
         self.act_italic.blockSignals(False)
         self.act_underline.blockSignals(False)
+
+    # --- Logging helpers ---
+    def _log_message(self, sender: str, text: str) -> None:
+        try:
+            logs_dir = Path(get_app_dir()) / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            filepath = logs_dir / f"{self.peer_screen_name}_{date_str}.txt"
+            time_str = datetime.now().strftime("%H:%M:%S")
+            with filepath.open("a", encoding="utf-8") as fp:
+                fp.write(f"[{time_str}] {sender}: {text}\n")
+        except Exception:
+            # Best-effort logging; ignore errors
+            pass
 
 
